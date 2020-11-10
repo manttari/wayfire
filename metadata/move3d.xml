@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<wayfire>
+	<plugin name="move3d">
+		<_short>Move 3D</_short>
+		<_long>A plugin to move windows around in 3D by dragging them from any part (not just the title bar).</_long>
+		<category>Window management</category>
+		<option name="activate" type="button">
+			<_short>Activate</_short>
+			<_long>When the specified button is held down, you can drag windows to move them.</_long>
+			<default>&lt;super&gt; BTN_MIDDLE</default>
+		</option>
+	</plugin>
+</wayfire>
+
