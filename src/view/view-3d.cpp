@@ -200,7 +200,34 @@ glm::mat4 wf::view_3D::calculate_total_transform()
     glm::mat4 depth_scale =
         glm::scale(glm::mat4(1.0), {1, 1, 2.0 / std::min(og.width, og.height)});
 
-    return translation * view_proj * depth_scale * rotation * scaling;
+    return translation * view_proj * translation_3d * depth_scale * rotation * scaling;
+}
+
+glm::mat4 wf::view_3D::calculate_partial_transform()
+{
+    auto og = view->get_output()->get_relative_geometry();
+    glm::mat4 depth_scale =
+        glm::scale(glm::mat4(1.0), {1, 1, 2.0 / std::min(og.width, og.height)});
+
+    return translation_3d * depth_scale * rotation * scaling;
+}
+
+glm::mat4 wf::view_3D::calculate_depth_scale()
+{
+    auto og = view->get_output()->get_relative_geometry();
+    glm::mat4 depth_scale =
+        glm::scale(glm::mat4(1.0), {1, 1, 2.0 / std::min(og.width, og.height)});
+
+    return depth_scale;
+}
+
+glm::mat4 wf::view_3D::calculate_inverse_depth_scale()
+{
+    auto og = view->get_output()->get_relative_geometry();
+    glm::mat4 depth_scale =
+        glm::scale(glm::mat4(1.0), {1, 1, 0.5 * std::min(og.width, og.height)});
+
+    return depth_scale;
 }
 
 wf::pointf_t wf::view_3D::transform_point(
@@ -226,13 +253,66 @@ wf::pointf_t wf::view_3D::transform_point(
     return get_absolute_coords_from_relative(geometry, {v.x, v.y});
 }
 
-/* TODO: is there a way to realiably reverse projective transformations? */
+glm::vec4 intersectPoint(glm::vec4 rayVector, glm::vec4 rayPoint, glm::vec4 planeNormal, glm::vec4 planePoint) {
+    glm::vec4 diff = rayPoint - planePoint;
+	double prod1 = glm::dot(diff,planeNormal);
+	double prod2 = glm::dot(rayVector,planeNormal);
+	double prod3 = prod1 / prod2;
+	return rayPoint - (float)prod3 * rayVector;
+}
+
 wf::pointf_t wf::view_3D::untransform_point(wf::geometry_t geometry,
+    wf::pointf_t point)
+{
+    auto p = get_center_relative_coords(geometry, point);
+    glm::vec4 ux = view_proj * glm::vec4(1.0f, 0.0f, -1.0f, 1.0f);
+    glm::vec4 uy = view_proj * glm::vec4(0.0f, 1.0f, -1.0f, 1.0f);
+    double x = p.x / ux.x;
+    double y = p.y / uy.y;
+    glm::vec4 rayVector = calculate_depth_scale() * glm::vec4(x, y, -1.0f, 1.0f);
+    rayVector.x /= rayVector.w;
+    rayVector.y /= rayVector.w;
+    rayVector.w = 1.0f;
+    rayVector = glm::normalize(rayVector);
+    glm::vec4 rayPoint = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    glm::mat4 partTrans = calculate_partial_transform();
+    //wf::point_t center_point = get_center(geometry);
+    glm::vec4 pointVec = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    glm::vec4 planePoint = partTrans * pointVec;
+    planePoint.x /= planePoint.w;
+    planePoint.y /= planePoint.w;
+    planePoint.w = 1.0f;
+    glm::vec4 planeUnitVecX = partTrans * (pointVec + glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
+    glm::vec4 planeUnitVecY = partTrans * (pointVec + glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
+    glm::vec4 planeUnitVecZ = partTrans * (pointVec + glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
+    planeUnitVecZ.x /= planeUnitVecZ.w;
+    planeUnitVecZ.y /= planeUnitVecZ.w;
+    planeUnitVecZ.w = 1.0f;
+    glm::vec4 planeNormal = planeUnitVecZ - planePoint;
+    planeNormal = glm::normalize(planeNormal);
+    glm::vec4 interPoint = intersectPoint(rayVector, rayPoint, planeNormal, planePoint);
+    if (std::abs(interPoint.w) < 1e-6)
+    {
+        /* This should never happen as long as we use well-behaving matrices.
+         * However if we set transform to the zero matrix we might get
+         * this case where v.w is zero. In this case we assume the view is
+         * just a single point at 0,0 */
+        interPoint.x = interPoint.y = 0;
+    } else
+    {
+        interPoint.x /= interPoint.w;
+        interPoint.y /= interPoint.w;
+    }
+    return get_absolute_coords_from_relative(geometry, {interPoint.x, interPoint.y});
+}
+
+/* TODO: is there a way to realiably reverse projective transformations? */
+/*wf::pointf_t wf::view_3D::untransform_point(wf::geometry_t geometry,
     wf::pointf_t point)
 {
     return {wf::compositor_core_t::invalid_coordinate,
         wf::compositor_core_t::invalid_coordinate};
-}
+}*/
 
 void wf::view_3D::render_box(wf::texture_t src_tex, wlr_box src_box,
     wlr_box scissor_box, const wf::framebuffer_t& fb)

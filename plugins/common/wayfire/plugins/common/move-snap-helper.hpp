@@ -7,6 +7,7 @@
 #include <wayfire/plugins/wobbly/wobbly-signal.hpp>
 #include <wayfire/util/log.hpp>
 #include <wayfire/debug.hpp>
+#include <wayfire/view-transform.hpp>
 
 namespace wf
 {
@@ -18,6 +19,7 @@ namespace wf
  * 2. Support for locking tiled views in-place until a certain threshold
  * 3. Ensuring view is grabbed at the correct place
  */
+constexpr const char *transformer_move3d = "transformer-move3d";
 class move_snap_helper_t : public wf::custom_data_t
 {
     wayfire_view view;
@@ -31,6 +33,7 @@ class move_snap_helper_t : public wf::custom_data_t
     bool view_in_slot; /* Whether the view is held at its original position */
     double px, py; /* Percentage of the view width/height from the grab point
                     *  to its upper-left corner */
+    bool is_using_3d;
 
     std::vector<wayfire_view> enum_views(wayfire_view view)
     {
@@ -49,6 +52,7 @@ class move_snap_helper_t : public wf::custom_data_t
         this->view = view;
         this->grab = grab;
         this->last_grabbing_position = grab;
+        this->prev_grabbing_position = grab;
 
         view_in_slot = should_enable_snap_off();
         for (auto v : enum_views(view))
@@ -60,6 +64,11 @@ class move_snap_helper_t : public wf::custom_data_t
         px = 1.0 * (grab.x - wmg.x) / wmg.width;
         py = 1.0 * (grab.y - wmg.y) / wmg.height;
         view->set_moving(1);
+        if (!view->get_transformer(transformer_move3d))
+        {
+            view->add_transformer(std::make_unique<wf::view_3D>(view),
+                transformer_move3d);
+        }
         view->connect_signal("geometry-changed", &view_geometry_changed);
     }
 
@@ -72,6 +81,7 @@ class move_snap_helper_t : public wf::custom_data_t
     virtual ~move_snap_helper_t()
     {
         view->set_moving(false);
+        view->set_resizing(false);
         view->disconnect_signal("geometry-changed", &view_geometry_changed);
         this->view = nullptr;
     }
@@ -82,8 +92,9 @@ class move_snap_helper_t : public wf::custom_data_t
      *
      * @param to The new grab point position, in output-local coordinates.
      */
-    virtual void handle_motion(wf::point_t to)
+    virtual void handle_motion(wf::point_t to, bool is_using_3d = false)
     {
+        this->is_using_3d = is_using_3d;
         for (auto v : enum_views(view))
         {
             move_wobbly(v, to.x, to.y);
@@ -140,6 +151,7 @@ class move_snap_helper_t : public wf::custom_data_t
             end_wobbly(v);
         }
 
+        //view->pop_transformer(transformer_move3d);
         view->disconnect_signal("geometry-changed", &view_geometry_changed);
         /**
          * Restore the fullscreen state so the window is
@@ -187,6 +199,7 @@ class move_snap_helper_t : public wf::custom_data_t
         }
     }
 
+    wf::point_t prev_grabbing_position;
     wf::point_t last_grabbing_position;
     /** Adjust the view position so that it stays around the grabbing point */
     virtual void adjust_around_grab()
@@ -198,7 +211,38 @@ class move_snap_helper_t : public wf::custom_data_t
         };
 
         view->disconnect_signal("geometry-changed", &view_geometry_changed);
-        view->move(target_position.x, target_position.y);
+
+        auto transform = dynamic_cast<wf::view_3D*>(
+            view->get_transformer(transformer_move3d).get());
+        if (is_using_3d && transform)
+        {
+            glm::vec4 translation_vec = transform->translation_3d * glm::vec4(0.0,0.0,0.0,1.0);
+            double translation_z = translation_vec.z;
+            double translation_dz = (double)(this->last_grabbing_position.y -
+                    this->prev_grabbing_position.y) * -1.0 / 30.0;
+            translation_z -= translation_dz;
+            if (translation_z > 0.0) translation_z = 0.0;
+            if (translation_z < -10.0) translation_z = -10.0;
+            view->damage();
+            //transform->translation = glm::translate(glm::mat4(1.0), {0.0, 0.0, 0.0});
+            transform->translation_3d = glm::translate(glm::mat4(1.0), {0.0, 0.0, translation_z});
+            //transform->scaling = glm::scale(glm::mat4(1.0), {1.0f, 1.0f, 1.0});
+            //transform->rotation = glm::rotate(glm::mat4(1.0), 0.0f, {0.0, 1.0, 0.0});
+            uint32_t edges = 0;
+            edges |= WLR_EDGE_LEFT;
+            edges |= WLR_EDGE_RIGHT;
+            edges |= WLR_EDGE_TOP;
+            edges |= WLR_EDGE_BOTTOM;
+            view->set_moving(true);
+            view->set_resizing(true, edges);
+            view->damage();
+        }
+        else
+        {
+            view->move(target_position.x, target_position.y);
+        }
+
+        this->prev_grabbing_position = this->last_grabbing_position;
         view->connect_signal("geometry-changed", &view_geometry_changed);
     }
 

@@ -147,10 +147,13 @@ class view_3D : public view_transformer_t
     wayfire_view view;
 
   public:
-    glm::mat4 view_proj{1.0}, translation{1.0}, rotation{1.0}, scaling{1.0};
+    glm::mat4 view_proj{1.0}, translation{1.0}, rotation{1.0}, scaling{1.0}, translation_3d{1.0};
     glm::vec4 color{1, 1, 1, 1};
 
     glm::mat4 calculate_total_transform();
+    glm::mat4 calculate_partial_transform();
+    glm::mat4 calculate_depth_scale();
+    glm::mat4 calculate_inverse_depth_scale();
 
   public:
     view_3D(wayfire_view view);

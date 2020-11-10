@@ -29,3 +29,5 @@ install_data('wobbly.xml', install_dir: conf_data.get('PLUGIN_XML_DIR'))
 install_data('workarounds.xml', install_dir: conf_data.get('PLUGIN_XML_DIR'))
 install_data('wrot.xml', install_dir: conf_data.get('PLUGIN_XML_DIR'))
 install_data('zoom.xml', install_dir: conf_data.get('PLUGIN_XML_DIR'))
+install_data('move3d.xml', install_dir: conf_data.get('PLUGIN_XML_DIR'))
+
