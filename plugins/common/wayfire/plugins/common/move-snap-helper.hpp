@@ -64,11 +64,6 @@ class move_snap_helper_t : public wf::custom_data_t
         px = 1.0 * (grab.x - wmg.x) / wmg.width;
         py = 1.0 * (grab.y - wmg.y) / wmg.height;
         view->set_moving(1);
-        if (!view->get_transformer(transformer_move3d))
-        {
-            view->add_transformer(std::make_unique<wf::view_3D>(view),
-                transformer_move3d);
-        }
         view->connect_signal("geometry-changed", &view_geometry_changed);
     }
 
@@ -81,7 +76,7 @@ class move_snap_helper_t : public wf::custom_data_t
     virtual ~move_snap_helper_t()
     {
         view->set_moving(false);
-        view->set_resizing(false);
+        //view->set_resizing(false);
         view->disconnect_signal("geometry-changed", &view_geometry_changed);
         this->view = nullptr;
     }
@@ -95,6 +90,13 @@ class move_snap_helper_t : public wf::custom_data_t
     virtual void handle_motion(wf::point_t to, bool is_using_3d = false)
     {
         this->is_using_3d = is_using_3d;
+
+        if (is_using_3d && !view->get_transformer(transformer_move3d))
+        {
+            view->add_transformer(std::make_unique<wf::view_3D>(view),
+                transformer_move3d);
+        }
+
         for (auto v : enum_views(view))
         {
             move_wobbly(v, to.x, to.y);
@@ -219,22 +221,22 @@ class move_snap_helper_t : public wf::custom_data_t
             glm::vec4 translation_vec = transform->translation_3d * glm::vec4(0.0,0.0,0.0,1.0);
             double translation_z = translation_vec.z;
             double translation_dz = (double)(this->last_grabbing_position.y -
-                    this->prev_grabbing_position.y) * -1.0 / 30.0;
+                    this->prev_grabbing_position.y) * -0.5;
             translation_z -= translation_dz;
             if (translation_z > 0.0) translation_z = 0.0;
-            if (translation_z < -10.0) translation_z = -10.0;
+            if (translation_z < -50.0) translation_z = -50.0;
             view->damage();
             //transform->translation = glm::translate(glm::mat4(1.0), {0.0, 0.0, 0.0});
             transform->translation_3d = glm::translate(glm::mat4(1.0), {0.0, 0.0, translation_z});
             //transform->scaling = glm::scale(glm::mat4(1.0), {1.0f, 1.0f, 1.0});
             //transform->rotation = glm::rotate(glm::mat4(1.0), 0.0f, {0.0, 1.0, 0.0});
-            uint32_t edges = 0;
-            edges |= WLR_EDGE_LEFT;
-            edges |= WLR_EDGE_RIGHT;
-            edges |= WLR_EDGE_TOP;
-            edges |= WLR_EDGE_BOTTOM;
-            view->set_moving(true);
-            view->set_resizing(true, edges);
+            //uint32_t edges = 0;
+            //edges |= WLR_EDGE_LEFT;
+            //edges |= WLR_EDGE_RIGHT;
+            //edges |= WLR_EDGE_TOP;
+            //edges |= WLR_EDGE_BOTTOM;
+            //view->set_moving(true);
+            //view->set_resizing(true, edges);
             view->damage();
         }
         else

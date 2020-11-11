@@ -4,6 +4,7 @@
 #include "wayfire/output.hpp"
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -180,6 +181,7 @@ glm::mat4 wf::view_3D::default_view_matrix()
         glm::vec3(0., 0., 1.0 / std::tan(fov / 2)),
         glm::vec3(0., 0., 0.),
         glm::vec3(0., 1., 0.));
+    /*return glm::mat4(1.0);*/
 }
 
 glm::mat4 wf::view_3D::default_proj_matrix()
@@ -191,6 +193,7 @@ wf::view_3D::view_3D(wayfire_view view)
 {
     this->view = view;
     view_proj  = default_proj_matrix() * default_view_matrix();
+    viewport_scale = calculate_viewport_scale();
 }
 
 /* TODO: cache total_transform, because it is often unnecessarily recomputed */
@@ -198,36 +201,23 @@ glm::mat4 wf::view_3D::calculate_total_transform()
 {
     auto og = view->get_output()->get_relative_geometry();
     glm::mat4 depth_scale =
-        glm::scale(glm::mat4(1.0), {1, 1, 2.0 / std::min(og.width, og.height)});
+        glm::scale(glm::mat4(1.0), {1, 1, 1 /*2.0 / std::min(og.width, og.height)*/});
 
-    return translation * view_proj * translation_3d * depth_scale * rotation * scaling;
+    return translation /* * viewport_scale*/ * view_proj * depth_scale * translation_3d * rotation * scaling;
 }
 
 glm::mat4 wf::view_3D::calculate_partial_transform()
 {
-    auto og = view->get_output()->get_relative_geometry();
-    glm::mat4 depth_scale =
-        glm::scale(glm::mat4(1.0), {1, 1, 2.0 / std::min(og.width, og.height)});
-
-    return translation_3d * depth_scale * rotation * scaling;
+    return default_view_matrix() * translation_3d * rotation * scaling;
 }
 
-glm::mat4 wf::view_3D::calculate_depth_scale()
+glm::mat4 wf::view_3D::calculate_viewport_scale()
 {
     auto og = view->get_output()->get_relative_geometry();
-    glm::mat4 depth_scale =
-        glm::scale(glm::mat4(1.0), {1, 1, 2.0 / std::min(og.width, og.height)});
+    glm::mat4 viewport_scale =
+        glm::scale(glm::mat4(1.0), {og.width/2.0, og.height/2.0, std::min(og.width, og.height)/2.0});
 
-    return depth_scale;
-}
-
-glm::mat4 wf::view_3D::calculate_inverse_depth_scale()
-{
-    auto og = view->get_output()->get_relative_geometry();
-    glm::mat4 depth_scale =
-        glm::scale(glm::mat4(1.0), {1, 1, 0.5 * std::min(og.width, og.height)});
-
-    return depth_scale;
+    return viewport_scale;
 }
 
 wf::pointf_t wf::view_3D::transform_point(
@@ -253,61 +243,84 @@ wf::pointf_t wf::view_3D::transform_point(
     return get_absolute_coords_from_relative(geometry, {v.x, v.y});
 }
 
-glm::vec4 intersectPoint(glm::vec4 rayVector, glm::vec4 rayPoint, glm::vec4 planeNormal, glm::vec4 planePoint) {
-    glm::vec4 diff = rayPoint - planePoint;
+glm::vec3 intersectPoint(glm::vec3 rayVector, glm::vec3 rayPoint, glm::vec3 planeNormal, glm::vec3 planePoint) {
+    glm::vec3 diff = rayPoint - planePoint;
 	double prod1 = glm::dot(diff,planeNormal);
 	double prod2 = glm::dot(rayVector,planeNormal);
 	double prod3 = prod1 / prod2;
 	return rayPoint - (float)prod3 * rayVector;
 }
 
+std::ostream& operator<<(std::ostream& ost, const glm::vec3& v)
+{
+    ost << "(" << v.x << "," << v.y << "," << v.z << ")";
+    return ost;
+}
+
+std::ostream& operator<<(std::ostream& ost, const glm::vec4& v)
+{
+    ost << "(" << v.x << "," << v.y << "," << v.z << "," << v.w << ")";
+    return ost;
+}
+void doWeight(glm::vec4& v)
+{
+    v.x /= v.w;
+    v.y /= v.w;
+    v.z /= v.w;
+    v.w = 1.0f;
+}
+
+// https://antongerdelan.net/opengl/raycasting.html
+
 wf::pointf_t wf::view_3D::untransform_point(wf::geometry_t geometry,
     wf::pointf_t point)
 {
+    auto view_geo = view->get_wm_geometry();
+    auto og = view->get_output()->get_relative_geometry();
     auto p = get_center_relative_coords(geometry, point);
-    glm::vec4 ux = view_proj * glm::vec4(1.0f, 0.0f, -1.0f, 1.0f);
-    glm::vec4 uy = view_proj * glm::vec4(0.0f, 1.0f, -1.0f, 1.0f);
-    double x = p.x / ux.x;
-    double y = p.y / uy.y;
-    glm::vec4 rayVector = calculate_depth_scale() * glm::vec4(x, y, -1.0f, 1.0f);
-    rayVector.x /= rayVector.w;
-    rayVector.y /= rayVector.w;
-    rayVector.w = 1.0f;
-    rayVector = glm::normalize(rayVector);
-    glm::vec4 rayPoint = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+    auto inv_view = glm::inverse(default_view_matrix());
+    auto inv_translation = glm::inverse(translation);
+    auto viewport_scale = calculate_viewport_scale();
+    auto inv_viewport_scale = glm::inverse(viewport_scale);
+    glm::vec4 ray_nds = inv_viewport_scale * inv_translation * glm::vec4(p.x, p.y, 0.0f, 1.0f);
+    doWeight(ray_nds);
+    glm::vec4 ray_clip = glm::vec4(ray_nds.x, ray_nds.y, -1.0f, 1.0f);
+    glm::vec4 ray_eye = glm::inverse(default_proj_matrix()) * ray_clip;
+    ray_eye = glm::vec4(ray_eye.x, ray_eye.y, -1.0f, 0.0f);
+    glm::vec3 rayPoint = glm::vec3(0.0f, 0.0f, 0.0f);
+    glm::vec4 ray_wor = (glm::inverse(default_view_matrix()) * ray_eye);
+    glm::vec3 ray_wor2 = glm::vec3(ray_wor.x, ray_wor.y, ray_wor.z);
+    ray_wor2 = glm::normalize(ray_wor2);
     glm::mat4 partTrans = calculate_partial_transform();
     //wf::point_t center_point = get_center(geometry);
     glm::vec4 pointVec = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-    glm::vec4 planePoint = partTrans * pointVec;
-    planePoint.x /= planePoint.w;
-    planePoint.y /= planePoint.w;
-    planePoint.w = 1.0f;
     glm::vec4 planeUnitVecX = partTrans * (pointVec + glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
     glm::vec4 planeUnitVecY = partTrans * (pointVec + glm::vec4(0.0f, 1.0f, 0.0f, 1.0f));
     glm::vec4 planeUnitVecZ = partTrans * (pointVec + glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
-    planeUnitVecZ.x /= planeUnitVecZ.w;
-    planeUnitVecZ.y /= planeUnitVecZ.w;
-    planeUnitVecZ.w = 1.0f;
-    glm::vec4 planeNormal = planeUnitVecZ - planePoint;
+    doWeight(planeUnitVecZ);
+    glm::vec4 planePoint = partTrans * pointVec;
+    doWeight(planePoint);
+    glm::vec3 planePoint2 = glm::vec3(planePoint.x, planePoint.y, planePoint.z);
+    glm::vec3 planeNormal = glm::vec3(planeUnitVecZ.x,planeUnitVecZ.y,planeUnitVecZ.z) - planePoint2;
     planeNormal = glm::normalize(planeNormal);
-    glm::vec4 interPoint = intersectPoint(rayVector, rayPoint, planeNormal, planePoint);
-    if (std::abs(interPoint.w) < 1e-6)
-    {
-        /* This should never happen as long as we use well-behaving matrices.
-         * However if we set transform to the zero matrix we might get
-         * this case where v.w is zero. In this case we assume the view is
-         * just a single point at 0,0 */
-        interPoint.x = interPoint.y = 0;
-    } else
-    {
-        interPoint.x /= interPoint.w;
-        interPoint.y /= interPoint.w;
-    }
-    return get_absolute_coords_from_relative(geometry, {interPoint.x, interPoint.y});
+    glm::vec3 interPoint = intersectPoint(ray_wor2, rayPoint, planeNormal, planePoint);
+    wf::pointf_t scaledInterP;
+    scaledInterP.x = interPoint.x * og.width/2;
+    scaledInterP.y = interPoint.y * og.height/2;
+    wf::pointf_t clickPos = get_absolute_coords_from_relative(geometry, {scaledInterP.x, scaledInterP.y});
+    std::cout << "p=" << p << " size=" << view_geo.width << "," << view_geo.height
+              << " ray_nds=" << ray_nds << " ray_eye=" << ray_eye
+              << " ray_wor2=" << ray_wor2 << " rayP=" << rayPoint << " planeP2=" << planePoint2 << " planeUz=" << planeUnitVecZ
+              << " planeN=" << planeNormal << " interP=" << interPoint << " scaledInterP=" << scaledInterP << " clickP=" << clickPos
+              << "\n";
+    std::cout.flush();
+    return clickPos;
 }
 
+
 /* TODO: is there a way to realiably reverse projective transformations? */
-/*wf::pointf_t wf::view_3D::untransform_point(wf::geometry_t geometry,
+/*
+wf::pointf_t wf::view_3D::untransform_point(wf::geometry_t geometry,
     wf::pointf_t point)
 {
     return {wf::compositor_core_t::invalid_coordinate,
